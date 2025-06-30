@@ -1,19 +1,13 @@
 package handlers
 
 import (
-	"bufio"
-	"bytes"
-	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/Yandex-Practicum/go1fl-sprint6-final/internal/service"
 )
-
-//1040 - 1103
-//65 - 122
 
 func HandleHTML(res http.ResponseWriter, req *http.Request) {
 	HTML, err := os.ReadFile("index.html")
@@ -24,40 +18,42 @@ func HandleHTML(res http.ResponseWriter, req *http.Request) {
 	res.Write(HTML)
 }
 
-func HandleUpload(res http.ResponseWriter, req *http.Request) {
-	var buf bytes.Buffer
+func HandleUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
-	_, err := buf.ReadFrom(req.Body)
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		http.Error(w, "Failed to parse form: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	file, header, err := r.FormFile("file")
 	if err != nil {
-		http.Error(res, err.Error(), http.StatusBadRequest)
+		http.Error(w, "Failed to get file: "+err.Error(), http.StatusBadRequest)
+		return
 	}
+	defer file.Close()
 
-	req.Body.Close()
+	filename := header.Filename
 
-	scanner := bufio.NewScanner(&buf)
+	if len(filename) < 4 || filename[len(filename)-4:] != ".txt" {
+		http.Error(w, "Only .txt files are allowed", http.StatusBadRequest)
 
-	for scanner.Scan() {
-		if scanner.Text() == "" {
-			break
+		content, err := io.ReadAll(file)
+		if err != nil {
+			http.Error(w, "Failed to read file: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		result := service.WriteResults(string(content))
+
+		// Возвращаем результат
+		w.Header().Set("Content-Type", "text/plain")
+		if _, err := w.Write([]byte(result)); err != nil {
+			log.Printf("Failed to write response: %v", err)
 		}
 	}
 
-	text := ""
-
-	for scanner.Scan() {
-		if strings.Contains(scanner.Text(), "#$!$") {
-			break
-		}
-		text += scanner.Text()
-	}
-
-	if strings.Contains(text, "------WebKitFormBoundary") {
-		text_splited := strings.Split(text, "------WebKitFormBoundary")
-		fmt.Println(text_splited[0])
-		res.Write([]byte(service.WriteResults(text_splited[0])))
-	} else {
-		text = text[:len(text)-64]
-		fmt.Println(text)
-		res.Write([]byte(service.WriteResults(text)))
-	}
 }
